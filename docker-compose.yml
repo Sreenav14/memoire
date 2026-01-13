@@ -1,0 +1,20 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: memoire-db
+    environment:
+      POSTGRES_USER: memoire
+      POSTGRES_PASSWORD: memoire
+      POSTGRES_DB: memoire
+    ports:
+     - "5432:5432"
+    volumes:
+      - memoire_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U memoire -d memoire"]
+      interval: 5s
+      timeout: 3s 
+      retries: 20 
+
+volumes:
+  memoire_db_data:
