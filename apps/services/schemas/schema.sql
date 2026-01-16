@@ -1,12 +1,12 @@
 -- memoire core schema (local dev)
 
-Begin;
-
 -- for pgvector
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- UUID Generation
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+BEGIN;
 
 -- Users
 CREATE TABLE IF NOT EXISTS users (
@@ -15,26 +15,26 @@ CREATE TABLE IF NOT EXISTS users (
     last_name  TEXT NOT NULL,
     email      TEXT NOT NULL UNIQUE,
     email_verified BOOLEAN DEFAULT FALSE,
-    created_at    TIMESTAMP NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMP NOT NULL DEFAULT now()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 --  Email/password credentials (only for user who signs up with password)
 CREATE TABLE IF NOT EXISTS user_passwords (
     user_id        UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     password_hash  TEXT NOT NULL,
-    created_at     TIMESTAMP NOT NULL DEFAULT now(),
-    updated_at     TIMESTAMP NOT NULL DEFAULT now()
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- OAUTH Identification (on euser can have multiple oauth providers)
+-- OAUTH Identification (one user can have multiple oauth providers)
 CREATE TABLE IF NOT EXISTS user_oauth_identities (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     provider    TEXT NOT NULL,
     provider_user_id TEXT NOT NULL,
     provider_email TEXT NOT NULL,
-    created_at    TIMESTAMP NOT NULL DEFAULT now(),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE   (provider, provider_user_id)
 );
 
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS spaces (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name        TEXT NOT NULL,
     owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at   TIMESTAMP NOT NULL DEFAULT now()
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Space membership (teams later)
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS user_spaces (
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     space_id    UUID NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
     role        TEXT NOT NULL DEFAULT 'owner', -- owner, admin, viewer
-    created_at  TIMESTAMP NOT NULL DEFAULT now(),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (user_id, space_id)
 );
 
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
     title       TEXT,
     content     TEXT NOT NULL,
     embeddings  VECTOR(1536),
-    created_at  TIMESTAMP NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_items_space_id ON memory_items(space_id);
@@ -81,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_items_space_id ON memory_items(space_id);
 CREATE TABLE IF NOT EXISTS decision_supersedes (
     newer_decision_id UUID NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
     older_decision_id UUID NOT NULL REFERENCES memory_items(id) ON DELETE CASCADE,
-    created_at     TIMESTAMP NOT NULL DEFAULT now(),
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (newer_decision_id, older_decision_id)
 );
 -- DOCUMENTS + CHUNKS (ingestion layer)
@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS documents (
     title       TEXT,
     source_url  TEXT, -- s3
     status      TEXT NOT NULL DEFAULT 'pending', -- pending/processing/ready/failed
-    created_at  TIMESTAMP NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_documents_space_id ON documents(space_id);
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     chunk_index INT NOT NULL,
     text        TEXT NOT NULL,
     embeddings  VECTOR(1536),
-    created_at  TIMESTAMP NOT NULL DEFAULT now(),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (document_id, chunk_index)
 );
 
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS api_tokens (
     token_hash  TEXT NOT NULL,
     name        TEXT ,
     last_used_at TIMESTAMP,
-    created_at  TIMESTAMP NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON api_tokens(user_id);
