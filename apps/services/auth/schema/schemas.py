@@ -6,3 +6,7 @@ class SignupRequest(BaseModel):
     email: EmailStr 
     password: str = Field(min_length=8, max_length=100)
     
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=100)
+    

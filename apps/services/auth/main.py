@@ -5,11 +5,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from .Database.deps import get_db
-from .Database.models import User, Space, UserSpace
-from .schema.schemas import SignupRequest
-from .auth.auth import hash_password, create_access_token
-from .Database.models import User, UserPassword, Space, UserSpace
+from .deps import get_db
+from .models import User, Space, UserSpace, UserPassword
+from .schema.schemas import SignupRequest, LoginRequest
+from .auth import hash_password, create_access_token, verify_password
+from .models import User, UserPassword, Space, UserSpace
+from .auth_deps import get_current_user
 
 load_dotenv()
 app = FastAPI(title ="MEMORIE API", version = "0.1.0")
@@ -19,41 +20,33 @@ def health():
     return {"status": "ok", "service": "memoire-api"}
 
 @app.get("/me")
-def me(db:Session = Depends(get_db)):
-    """ 
-    Dev-only for now
-    """
-    
-    dev_email = os.getenv("DEV_EMAIL","dev@memoire.local").lower()
-    user = db.execute(select(User).where(User.email==dev_email)).scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+def me(current_user: User = Depends(get_current_user), db:Session = Depends(get_db)):
     
     rows = db.execute(
-        select(Space.id, Space.name, UserSpace.role, Space.created_at)
-        .join(UserSpace, UserSpace.user_id==user.id)
-        .where(UserSpace.user_id==user.id)
-        .order_by(Space.created_at.desc())
-    ).all()
-
+        select(Space.id, Space.name, UserSpace.role, UserSpace.created_at)
+        .join(UserSpace, UserSpace.space_id==Space.id)
+        .where(UserSpace.user_id==current_user.id)
+        .order_by(UserSpace.created_at.asc())
+        ).all()
+    
     spaces = [
-        {"id": r[0], "name":r[1], "role":r[2], "created_at":r[3]}
+        {"id": str( r[0]), "name": r[1], "role": r[2], "created_at": r[3]}
         for r in rows
     ]
     
     return {
         "user" : {
-            "id": user.id,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "email":user.email,
-            "email_verified":user.email_verified,
-            "created_at":user.created_at,
+            "id": str(current_user.id),
+            "first_name": current_user.first_name,
+            "last_name": current_user.last_name,
+            "email": current_user.email,
+            "email_verified": current_user.email_verified,
+            "created_at": current_user.created_at,
         },
         "spaces": spaces,
     }
     
-@app.post("/signup")
+@app.post("/auth/signup")
 def signup(payload: SignupRequest, db:Session = Depends(get_db)):
     email = payload.email.lower()
     if not email:
@@ -109,3 +102,23 @@ def signup(payload: SignupRequest, db:Session = Depends(get_db)):
         "default_space":{"id":str(space.id), "name":space.name},
     }
     
+@app.post("/auth/login")
+def login(payload: LoginRequest, db:Session = Depends(get_db)):
+    email = payload.email.lower()
+    
+    user = db.execute(select(User).where(User.email==email)).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    pw = db.execute(select(UserPassword).where(UserPassword.user_id==user.id)).scalar_one_or_none()
+    if not pw:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    if not verify_password(payload.password, pw.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    token = create_access_token(str(user.id))
+    return {
+        "access_token": token,
+        "token_type": "Bearer"
+    }

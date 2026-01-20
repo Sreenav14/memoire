@@ -5,7 +5,7 @@ from sqlalchemy.orm import relationship, Mapped, mapped_column
 from sqlalchemy.sql import func
 import uuid
 
-from .db import Base
+from .database import Base
 
 class User(Base):
     __tablename__ = "users"
