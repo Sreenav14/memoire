@@ -9,12 +9,14 @@ from .models import UserSpace, MemoryItem
 from .schema import NoteCreate
 from .auth_deps import get_current_user
 from .routers import notes
+from .routers import search
 
 load_dotenv()
-app = FastAPI(title="Memoire memory service", version="0.1.0")
+app = FastAPI(title="Memoire memory service", version="0.1.0", debug=True)
 
 @app.get("/health")
 def health():
     return {"status":"ok", "service":"memoire-memory"}
 
 app.include_router(notes.router)
+app.include_router(search.router)

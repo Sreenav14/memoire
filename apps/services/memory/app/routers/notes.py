@@ -10,6 +10,7 @@ from ..models import UserSpace, MemoryItem
 from ..schema import NoteCreate
 from ..auth_deps import get_current_user
 from .cursor import encode_cursor, decode_cursor
+from ..utils.embeddings import generate_stub_embedding
 
 load_dotenv()
 
@@ -29,13 +30,17 @@ def create_note(
     if not allowed:
         raise HTTPException(status_code=403, detail = "No access to this space")
     
+    vector = generate_stub_embedding(payload.content)
     # 2. Insert into notes
     note = MemoryItem(
         space_id = payload.space_id,
         user_id = UUID(user),
         type = "note",
         content = payload.content,
+        embeddings = vector,
     )
+        
+    
     db.add(note)
     db.commit()
     db.refresh(note)
