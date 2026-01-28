@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Depends, APIRouter
 from typing import Optional
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
-from sqlalchemy import select, select, and_, or_
+from sqlalchemy import select, and_, or_
 from uuid import UUID
 
 from ..deps import get_db
@@ -10,7 +10,7 @@ from ..models import UserSpace, MemoryItem
 from ..schema import NoteCreate
 from ..auth_deps import get_current_user
 from .cursor import encode_cursor, decode_cursor
-from ..utils.embeddings import generate_stub_embedding
+from ..utils.embeddings import embed_text
 
 load_dotenv()
 
@@ -30,7 +30,7 @@ def create_note(
     if not allowed:
         raise HTTPException(status_code=403, detail = "No access to this space")
     
-    vector = generate_stub_embedding(payload.content)
+    vector = embed_text(payload.content)
     # 2. Insert into notes
     note = MemoryItem(
         space_id = payload.space_id,
