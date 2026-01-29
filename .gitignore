@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.production
+.env.*
 
 # Python cache
 __pycache__/
@@ -24,3 +25,34 @@ Thumbs.db
 
 
 .cursor/
+
+# Secrets / credentials
+openai.txt
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+credentials*.json
+*service-account*.json
+
+# Python tooling / test artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage/
+htmlcov/
+
+# Local databases / volumes
+*.sqlite
+*.sqlite3
+*.db
+pgdata/
+data/
+
+# Node / frontend artifacts (repo-wide safety)
+node_modules/
+dist/
+.eslintcache
+.vite/

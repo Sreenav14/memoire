@@ -45,6 +45,20 @@ def me(current_user: User = Depends(get_current_user), db:Session = Depends(get_
         },
         "spaces": spaces,
     }
+
+@app.get("/spaces")
+def list_spaces(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    rows = db.execute(
+        select(Space.id, Space.name, UserSpace.role, UserSpace.created_at)
+        .join(UserSpace, UserSpace.space_id == Space.id)
+        .where(UserSpace.user_id == current_user.id)
+        .order_by(UserSpace.created_at.asc())
+    ).all()
+
+    return [
+        {"id": str(r[0]), "name": r[1], "role": r[2], "created_at": r[3]}
+        for r in rows
+    ]
     
 @app.post("/auth/signup")
 def signup(payload: SignupRequest, db:Session = Depends(get_db)):

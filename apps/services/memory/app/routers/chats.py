@@ -25,7 +25,7 @@ DEFAULT_GROQ_MODEL = os.getenv("GROQ_CHAT_MODEL", "llama-3.1-8b-instant")
 def build_context(memories: list[dict])-> str:
     # just return cite by [id]
     
-    return "\n\n".join([f"[{m["id"]}] {m['snippet']}" for m in memories])
+    return "\n\n".join([f"[{m['id']}] {m['snippet']}" for m in memories])
 
 
 def call_openai_chat(model:str,system_prompt:str, user_prompt:str)-> str:
@@ -86,7 +86,7 @@ def chat(
     
     # HNSW tuning
     try:
-        db.exeute(sql_text("SET LOCAL hnsw.ef_search =:v"), {"v":80})
+        db.execute(sql_text("SET LOCAL hnsw.ef_search =:v"), {"v": 80})
     except Exception:
         pass
     
