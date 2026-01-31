@@ -1,0 +1,28 @@
+@layer components {
+    .panel {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-soft);
+    }
+  
+    .chip {
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 14px;
+      border: 1px solid var(--color-border);
+      background: transparent;
+      color: var(--color-text);
+    }
+  
+    .chip.active {
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.2);
+    }
+  
+    .memory-row {
+      padding: 12px 0;
+      border-bottom: 1px solid var(--color-border);
+    }
+  }
+  

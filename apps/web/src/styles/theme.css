@@ -1,0 +1,16 @@
+@theme {
+    --color-bg: #0b0f14;
+    --color-panel: #0f1620;
+    --color-surface: #121c27;
+    --color-border: rgba(255,255,255,0.08);
+    --color-text: rgba(255,255,255,0.92);
+    --color-muted: rgba(255,255,255,0.62);
+    --color-accent: #8b5cf6;
+  
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+  
+    --shadow-soft: 0 6px 18px rgba(0,0,0,0.35);
+  }
+  

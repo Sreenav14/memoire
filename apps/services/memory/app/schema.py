@@ -35,4 +35,20 @@ class SaveConversationRequest(BaseModel):
     mode: SaveMode
     title: Optional[str] = None
     max_message: Optional[int] = 20  #used for 'full'
+
+class DocumentCreate(BaseModel):
+    space_id: UUID
+    source_type: str = Field(default="upload")
+    title: Optional[str] = None
+    source_url: Optional[str] = None
+    text: Optional[str] = None
     
+class DocumentOut(BaseModel):
+    id: UUID
+    space_id: UUID
+    user_id: UUID
+    source_type: str
+    title: Optional[str] = None
+    source_url: Optional[str] = None
+    status: str
+    created_at: str

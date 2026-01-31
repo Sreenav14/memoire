@@ -1,63 +1,28 @@
-/* Enable Tailwind v4 */
 @import "tailwindcss";
 
-/* =========================
-   Memoir – The Memory Layer
-   Design Tokens
-   ========================= */
+/* Order matters */
+@import "./base.css";
+@import "./theme.css";
+@import "./layout.css";
+@import "./components.css";
 
-@theme {
-  /* Cream theme */
-  --color-memoir-bg: #F6F1E4;
-  --color-memoir-panel: #FFF9EE;
-  --color-memoir-card: #FFF4E0;
-  --color-memoir-stroke: rgba(17,24,39,0.10);
-  --color-memoir-text: rgba(17,24,39,0.92);
-  --color-memoir-muted: rgba(17,24,39,0.62);
-  --color-memoir-accent: #8B5CF6;
 
-  --radius-xl: 16px;
-  --radius-2xl: 20px;
-
-  --shadow-soft: 0 10px 30px rgba(0,0,0,0.35);
+/* Dark scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.18) transparent;
 }
 
-/* Base document setup */
-@layer base {
-  :root {
-    color-scheme: light;
-  }
-
-  html, body, #root {
-    height: 100%;
-  }
-
-  body {
-    margin: 0;
-    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI,
-      Roboto, Inter, Arial;
-    background:
-      radial-gradient(
-        900px 500px at 30% 20%,
-        rgba(139,92,246,0.10),
-        transparent 60%
-      ),
-      radial-gradient(
-        700px 400px at 80% 10%,
-        rgba(34,211,238,0.06),
-        transparent 55%
-      ),
-      var(--color-memoir-bg);
-    color: var(--color-memoir-text);
-  }
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
 }
-
-/* Optional polish */
-@layer utilities {
-  .panel {
-    background: var(--color-memoir-panel);
-    border: 1px solid var(--color-memoir-stroke);
-    border-radius: var(--radius-2xl);
-    box-shadow: var(--shadow-soft);
-  }
+*::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.18);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }

@@ -12,6 +12,7 @@ from .routers import notes
 from .routers import search
 from .routers import chats
 from .routers import chat_save
+from .routers import documents
 
 load_dotenv()
 app = FastAPI(title="Memoire memory service", version="0.1.0", debug=True)
@@ -24,3 +25,4 @@ app.include_router(notes.router)
 app.include_router(search.router)
 app.include_router(chats.router)
 app.include_router(chat_save.router)
+app.include_router(documents.router)

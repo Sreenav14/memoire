@@ -57,18 +57,18 @@ Common variables:
 
 ### 3) Start backend services
 
-Auth service (port 8000):
+Auth service (port 8001):
 
 ```bash
 cd apps/services
-uvicorn auth.main:app --reload --port 8000
+python -m uvicorn auth.main:app --reload --port 8001
 ```
 
-Memory service (port 8001):
+Memory service (port 8000):
 
 ```bash
 cd apps/services/memory
-uvicorn app.main:app --reload --port 8001
+python -m uvicorn app.main:app --reload --port 8000
 ```
 
 ### 4) Start frontend
@@ -84,14 +84,14 @@ Frontend runs at:
 
 ## API Overview
 
-Auth service (port 8000):
+Auth service (port 8001):
 - `GET /health`
 - `POST /auth/signup`
 - `POST /auth/login`
 - `GET /me` (requires Bearer token)
 - `GET /spaces` (requires Bearer token)
 
-Memory service (port 8001):
+Memory service (port 8000):
 - `GET /health`
 - `POST /chats` (requires Bearer token)
 - `POST /search` (requires Bearer token)
