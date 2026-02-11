@@ -3,7 +3,7 @@ export default function AppShell({
     top,
     center,
     right,
-    bottom,
+    // bottom,
     
   }) {
     return (

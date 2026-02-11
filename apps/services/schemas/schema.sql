@@ -107,7 +107,9 @@ CREATE TABLE IF NOT EXISTS chunks (
     text        TEXT NOT NULL,
     embeddings  VECTOR(1536),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (document_id, chunk_index)
+    UNIQUE (document_id, chunk_index),
+    char_start INT,
+    char_end   INT
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunks_space_id ON chunks(space_id);

@@ -1,0 +1,8 @@
+sqlalchemy
+psycopg[binary]
+python-dotenv
+pgvector
+openai
+pypdf
+requests
+beautifulsoup4

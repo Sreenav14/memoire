@@ -44,8 +44,11 @@ def create_document(
     require_space_access(db, req.space_id, user_id)
     
     # 2. validate payload
-    if not (req.text and req.text.strip() and not (req.source_url and req.source_url.strip())):
-        raise HTTPException(status_code=400, detail= "provide either text or source_url")
+    has_text = bool(req.text and req.text.strip())
+    has_url = bool(req.source_url and req.source_url.strip())
+    
+    if has_text and has_url:
+        raise HTTPException(status_code=400, detail="provide exactly one of text or source_url")
     
     # 3. create document
     doc = Document(
@@ -62,8 +65,9 @@ def create_document(
     db.flush()
     
     payload = {
-        "text": req.text,             # for pasted text ingestion
-        "source_url": req.source_url, # for url ingestion
+        "kind": "text" if has_text else "url",
+        "text": req.text if has_text else None,             # for pasted text ingestion
+        "source_url": req.source_url if has_url else None, # for url ingestion
         "title": req.title,
         "source_type": req.source_type,
     }
@@ -73,7 +77,7 @@ def create_document(
        job_type = "document_ingest",
        space_id = req.space_id,
        document_id = doc.id,
-       payload = json.dumps(payload),
+       payload = payload,
        status = "queued",
        
    )
@@ -104,8 +108,7 @@ def list_documents(
     require_space_access(db, space_id, user_id)
     
     # 2. return docs newest first
-    docs = db.execute(
-        select(Document).where(
+    docs = db.execute(select(Document).where(
             Document.space_id == space_id.order_by(Document.created_at.desc())).scalars().all()
         )
     return [
@@ -157,7 +160,7 @@ def upload_pdf(
     
     # 1. validate file
     filename = file.filename or "upload.pdf"
-    content_type = file.content_type or ContentType.PDF
+    content_type = file.content_type or "application/pdf"
     
     if not (filename.lower().endswith(".pdf") or content_type == "application/pdf"):
         raise HTTPException(status_code=400, detail="Invalid file type. Please upload a PDF file.")
@@ -169,7 +172,7 @@ def upload_pdf(
         raise HTTPException(status_code=400, detail=f"File too large. Maximum size is {MAX_MB}MB")
     
     # 3. save file
-    os.makedirs(UPLOAD_DIR, exists_ok = True)
+    os.makedirs(UPLOAD_DIR, exist_ok = True)
     doc_id = uuid.uuid4()
     safe_name = f"{doc_id}.pdf"
     path = os.path.join(UPLOAD_DIR, safe_name)
@@ -188,7 +191,7 @@ def upload_pdf(
         status = "pending",
     )
     db.add(doc)
-    db.flsuh()
+    db.flush()
     
     # 5. create ingestion job (worker will extract pdf)
     payload = {
@@ -204,7 +207,7 @@ def upload_pdf(
         job_type="document_ingest",
         space_id=space_id,
         document_id=doc.id,
-        payload=json.dumps(payload),
+        payload=payload,
         status="queued",
     )
     db.add(job)
