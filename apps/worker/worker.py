@@ -14,9 +14,13 @@ from .db import SessionLocal
 from .models import IngestionJob, Document, Chunk
 from .extractors import extract_text_from_url, extract_text_from_pdf
 from .chunking import chunk_text_smart_with_offsets
+from .graph.persist import persist_chunk_graph
+from .graph.extract_hybrid import extract_hybrid
 
 # todo: replace this with bedrock embeddings later
 from .embeddings import embed_text
+
+GRAPH_ENABLED = os.getenv("GRAPH_ENABLED", "1") == "1"
 
 log = logging.getLogger("memoire.worker")
 logging.basicConfig(
@@ -65,7 +69,7 @@ def claim_next_job(db: Session) -> Optional[IngestionJob]:
         return None
     
     job.status = "processing"
-    job.locked_at = datetime.datetime.utcnow()
+    job.locked_at = datetime.datetime.utcnow(datetime.timezone.utc)
     job.locked_by = WORKER_ID
     job.attempts = (job.attempts or 0) + 1
     job.error = None
@@ -89,7 +93,7 @@ def mark_job_failed(db: Session, job: IngestionJob, err: str, retry_after_second
     # retry with backoff until max_attempts
     if job.attempts < MAX_ATTEMPTS:
         job.status = "queued"
-        job.run_after = datetime.datetime.utcnow() + datetime.timedelta(seconds = retry_after_seconds)
+        job.run_after = datetime.datetime.utcnow(datetime.timezone.utc) + datetime.timedelta(seconds = retry_after_seconds)
         job.locked_at = None
         job.locked_by = None
     else:
@@ -131,13 +135,24 @@ def process_document_ingest(db: Session, job: IngestionJob) -> None:
     # determine source type and extract text
     full_text = ""
     
-    if doc.source_type == "link" and doc.source_url:
-        full_text = extract_text_from_url(doc.source_url)
+    kind = (payload.get("kind") or "").lower()
+    
+    if kind == "url":
+        url = payload.get("source_url") or doc.source_url
+        if not url:
+            raise RuntimeError("source_url is required for url ingestion")
+        full_text = extract_text_from_url(url)
+        
+    elif kind == "text":
+        txt = (payload.get("text") or "").strip()
+        if not txt:
+            raise RuntimeError("text is required for text ingestion")
+        full_text = txt
+        
     else:
-        # mvp local path
-        local_path = payload.get("local_path") or payload.get("file_path")
+        local_path = payload.get("file_path") or payload.get("local_path")
         if not local_path:
-            raise RuntimeError("local_path is required for local files")
+            raise RuntimeError("file_path is required for pdf ingestion")
         full_text = extract_text_from_pdf(local_path)
         
     # chunk with offsets
@@ -149,12 +164,13 @@ def process_document_ingest(db: Session, job: IngestionJob) -> None:
     db.execute(delete(Chunk).where(Chunk.document_id == doc.id))
     db.commit()
     
-    # embed + insert
+
+    #  embed + insert
     for ch in chunks:
         vec = embed_text(ch.text)
         db.add(
             Chunk(
-                document_id=doc.id,
+                document_id = doc.id,
                 space_id = doc.space_id,
                 chunk_index = ch.chunk_index,
                 text = ch.text,
@@ -163,8 +179,30 @@ def process_document_ingest(db: Session, job: IngestionJob) -> None:
                 char_end = ch.char_end,
             )
         )
+    # commiting chunk first
     db.commit()
     
+    # building graph
+    if GRAPH_ENABLED:
+        saved_chunks = db.execute(
+            select(Chunk).where(Chunk.document_id == doc.id).order_by(Chunk.chunk_index.asc())
+        ).scalars().all()
+        
+        for sc in saved_chunks:
+            try:
+                extraction = extract_hybrid(sc.text) #ner -> LLM verify -> Strict JSON
+                persist_chunk_graph(
+                    db=db,
+                    space_id = str(doc.space_id),
+                    document_id = str(doc.id),
+                    chunk_id = str(sc.id),
+                    chunk_text = sc.text,
+                    extraction = extraction,
+                )
+            except Exception as e:
+                log.warning("graph build failed for doc=%s chunk=%s err=%s", doc.id, sc.id, str(e)[:200])
+    
+        db.commit()
     doc.status = "ready"
     db.commit()
     
