@@ -7,6 +7,14 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // Auth service routes
+      "/api/auth": {
+        target: "http://localhost:8001",
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
+
       // Core REST API (spaces, notes, search)
       "/api": {
         target: "http://localhost:8000",
