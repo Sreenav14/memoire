@@ -3,10 +3,12 @@ import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "../store/auth";
 import { apiFetch } from "../api/client";
 
-export default function LoginPage() {
+export default function SignupPage() {
   const nav = useNavigate();
   const setToken = useAuthStore((s) => s.setToken);
 
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
@@ -17,21 +19,23 @@ export default function LoginPage() {
     setErr("");
     setLoading(true);
     try {
-      // Adjust path to match your auth service route.
-      // Example assumes proxy routes /api -> auth-service and auth routes under /auth
-      const resp = await apiFetch("/auth/login", {
+      const resp = await apiFetch("/auth/signup", {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          first_name: firstName,
+          last_name: lastName,
+          email,
+          password,
+        }),
       });
 
-      // Adjust token field name depending on your backend response
       const token = resp?.access_token || resp?.token || "";
       if (!token) throw new Error("No token returned from server");
 
       setToken(token);
       nav("/app", { replace: true });
     } catch (e2) {
-      setErr(e2.message || "Login failed");
+      setErr(e2.message || "Signup failed");
     } finally {
       setLoading(false);
     }
@@ -45,12 +49,36 @@ export default function LoginPage() {
 
         <form onSubmit={onSubmit} className="mt-6 space-y-3">
           <div>
+            <div className="text-xs opacity-70 mb-1">First Name</div>
+            <input
+              className="w-full bg-transparent border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-white/30"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              autoComplete="given-name"
+              required
+            />
+          </div>
+
+          <div>
+            <div className="text-xs opacity-70 mb-1">Last Name</div>
+            <input
+              className="w-full bg-transparent border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-white/30"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              autoComplete="family-name"
+              required
+            />
+          </div>
+
+          <div>
             <div className="text-xs opacity-70 mb-1">Email</div>
             <input
+              type="email"
               className="w-full bg-transparent border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-white/30"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
+              required
             />
           </div>
 
@@ -61,7 +89,9 @@ export default function LoginPage() {
               className="w-full bg-transparent border border-white/10 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-white/30"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
+              autoComplete="new-password"
+              minLength={8}
+              required
             />
           </div>
 
@@ -75,18 +105,14 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full rounded-xl bg-white/10 hover:bg-white/20 transition px-4 py-2 text-sm disabled:opacity-50"
           >
-            {loading ? "Signing in..." : "Sign in"}
+            {loading ? "Creating account..." : "Sign up"}
           </button>
 
           <div className="text-xs opacity-60 pt-2 text-center">
-            Don't have an account?{" "}
-            <Link to="/signup" className="underline hover:opacity-80">
-              Sign up
+            Already have an account?{" "}
+            <Link to="/login" className="underline hover:opacity-80">
+              Sign in
             </Link>
-          </div>
-
-          <div className="text-xs opacity-60 pt-2">
-            Tip: local dev tokens are stored in your browser for now. We'll move to httpOnly cookies later when we deploy.
           </div>
         </form>
       </div>
