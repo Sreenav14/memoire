@@ -126,7 +126,7 @@ def persist_chunk_graph(
         upsert_edge(
             db=db,
             space_id=space_id,
-            edgekey=ek,
+            ekey=ek,
             src_vid=name_to_vid[src],
             relation=rel,
             dst_vid=name_to_vid[dst],

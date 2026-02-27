@@ -6,6 +6,7 @@ import logging
 import socket
 import datetime
 from typing import Optional
+import uuid
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select, and_, or_, func, delete
@@ -16,7 +17,7 @@ from .extractors import extract_text_from_url, extract_text_from_pdf
 from .chunking import chunk_text_smart_with_offsets
 from .graph.persist import persist_chunk_graph
 from .graph.extract_hybrid import extract_hybrid
-
+from .consolidate import consolidate_document
 # todo: replace this with bedrock embeddings later
 from .embeddings import embed_text
 
@@ -69,7 +70,7 @@ def claim_next_job(db: Session) -> Optional[IngestionJob]:
         return None
     
     job.status = "processing"
-    job.locked_at = datetime.datetime.utcnow(datetime.timezone.utc)
+    job.locked_at = datetime.datetime.now(datetime.timezone.utc)
     job.locked_by = WORKER_ID
     job.attempts = (job.attempts or 0) + 1
     job.error = None
@@ -105,6 +106,39 @@ def mark_job_failed(db: Session, job: IngestionJob, err: str, retry_after_second
         log.warning("job %s  RETRY  attempt=%d  retry_in=%ds  err=%s", job.id, job.attempts, retry_after_seconds, err[:120])
     else:
         log.error("job %s  FAILED permanently  err=%s", job.id, err[:200])
+        
+        
+def enqueue_memory_consolidate(db: Session, *, space_id: str, document_id: str) -> None:
+    """ 
+    Enqueue a consolidation job after ingestion
+    Idempotent: if one is already enqueued, do nothing
+    """
+    
+    existing = (db.execute(
+        select(IngestionJob).where(
+            IngestionJob.job_type == "memory_consolidation",
+            IngestionJob.document_id == document_id,
+            IngestionJob.status.in_(["queued", "processing"]),
+        ).limit(1)
+    ).scalars().first()
+    )
+    if existing:
+        log.info("memory_consolidation already exists doc=%s job=%s",document_id, existing.id)
+        return 
+    payload = {"scope": "document","document_id": document_id}
+    j = IngestionJob(
+        id = uuid.uuid4(),
+        job_type = "memory_consolidate",
+        space_id = space_id,
+        document_id = document_id,
+        payload = json.dumps(payload),
+        status = "queued",
+        attempts = 0,
+        run_after = datetime.datetime.now(datetime.timezone.utc),
+    )
+    db.add(j)
+    db.commit()
+    log.info("enqueued memory_consolidates job=%s doc=%s, j.id, document_id")
 
 def process_document_ingest(db: Session, job: IngestionJob) -> None:
     if not job.document_id:
@@ -205,6 +239,7 @@ def process_document_ingest(db: Session, job: IngestionJob) -> None:
         db.commit()
     doc.status = "ready"
     db.commit()
+    enqueue_memory_consolidate(db, space_id = str(doc.space_id), document_id = str(doc.id))
     
 def run_once() -> bool:
     """
@@ -219,6 +254,10 @@ def run_once() -> bool:
         try:
             if job.job_type == "document_ingest":
                 process_document_ingest(db, job)
+            elif job.job_type == "memory_consolidate":
+                if not job.document_id:
+                    raise RuntimeError("memory_consolidate job has no document_id")
+                consolidate_document(db, space_id = str(job.space_id), document_id = str(job.document_id))
             else:
                 raise RuntimeError(f"unknown job type: {job.job_type}")
 
