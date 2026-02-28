@@ -3,17 +3,19 @@ from uuid import UUID
 from fastapi import HTTPException, Depends, APIRouter
 from sqlalchemy.orm import Session
 from sqlalchemy import select, text as sql_text
-from sqlalchemy.orm.writeonly import relationships
 
 from ..deps import get_db
 from ..models import UserSpace
 from ..auth_deps import get_current_user
-from ..schema import ChatRequest, ChatResponse
+from ..schema import ChatRequest, ChatResponse, MemoryCitation
 
 from ..utils.vector_retrieve import vector_recall_chunks
 from ..utils.seed_builder import edge_keys_from_chunks, entity_seeds_from_edges
-from ..utils.graph_retrieve import graph_expand, evidence_pack
-from ..utils.embeddings import embed_text
+from ..utils.graph_retrieve import graph_expand
+
+from ..utils.limits import GLOBAL_RATE_LIMITER, GLOBAL_CONCURRENCY, RateLimit
+from ..utils.llm_gateway import chat_completion
+
 
 from openai import OpenAI
 from groq import Groq
@@ -24,69 +26,79 @@ openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
-DEFAULT_GROQ_MODEL = os.getenv("GROQ_CHAT_MODEL","llama-3.1-8b-instant")
+DEFAULT_GROQ_MODEL = os.getenv("GROQ_CHAT_MODEL", "llama-3.1-8b-instant")
 
-def build_vector_context(chunks: list[dict], max_chunks: int = 6) -> str:
-    """ 
-    Small amount of semantic context from pgvector recall
-    """
-    lines: list[str] = []
-    for c in chunks[:max_chunks]:
-        lines.append(f"[CHUNK {c['chunk_id']}] {c['text'][:450]}")
-    return "\n".join(lines)
 
-def build_graph_context(graph_edges: list[dict], evidence: dict[str, list[dict]], max_edges:int=30) -> str:
-    """ 
-    structured facts + citations
-    The model must cite using [CITE edge_key:n]
-    """
-    lines: list[str] = []
-    for e in graph_edges[:max_edges]:
-        ek = e["edge_key"]
-        rel = e.get("relation")
-        conf = e.get("confidence")
-        kind = e.get("kind")
-        state = e.get("state")
-        
-        lines.append(f"[EDGE {ek}] rel = {rel}, confidence = {conf}, kind = {kind}, state = {state}")
-        
-        cites = evidence.get(ek, [])[:2]
-        for i, ev in enumerate(cites, start=1):
-            quote = (ev.get("quote") or "").strip()
-            chunk_id = ev.get("chunk_id")
-            doc_id = ev.get("document_id")
-            cs = ev.get("char_start")
-            ce = ev.get("char_end")
-            lines.append(f"  [CITE {ek}:{i}] doc={doc_id} chunk={chunk_id} offset={cs}-{ce} quote={quote}")
-            
-    return "\n".join(lines)
-
-def call_openai_chat(model: str, system_prompt: str, user_prompt: str)-> str:
+def call_openai_chat(model: str, system_prompt: str, user_prompt: str) -> str:
     resp = openai_client.chat.completions.create(
-        model= model,
-        messages=[
-            {"role":"system","content":system_prompt},
-            {"role":"user","content":user_prompt},
-        ],
-        temperature=0.2,
-        max_tokens=1500,
-        top_p=1,
-        presence_penalty = 0.0,
-        frequency_penalty = 0.0,       
-    )
-    return resp.choices[0].message.content or " "
-
-def call_groq_chat(model: str, system_prompt: str, user_prompt: str) -> str:
-    resp = groq_client.chat.completions.create(
         model=model,
-        messages = [
-            {"role":"system","content": system_prompt},
-            {"role":"user","content": user_prompt},
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         temperature=0.2,
         max_tokens=1500,
     )
     return resp.choices[0].message.content or ""
+
+
+def call_groq_chat(model: str, system_prompt: str, user_prompt: str) -> str:
+    resp = groq_client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.2,
+        max_tokens=1500,
+    )
+    return resp.choices[0].message.content or ""
+
+
+def fetch_evidence_rows(db: Session, *, space_id: str, edge_keys: list[str], limit_total: int = 12) -> list[dict]:
+    if not edge_keys:
+        return []
+    rows = db.execute(
+        sql_text(
+            """
+            SELECT edge_key, quote, confidence, created_at
+            FROM graph_evidence
+            WHERE space_id = :space_id
+              AND edge_key = ANY(:edge_keys)
+            ORDER BY confidence DESC, created_at DESC
+            LIMIT :limit_total
+            """
+        ),
+        {"space_id": space_id, "edge_keys": edge_keys, "limit_total": limit_total},
+    ).fetchall()
+
+    out = []
+    for edge_key, quote, conf, created_at in rows:
+        out.append(
+            {
+                "edge_key": str(edge_key),
+                "quote": (quote or "").strip(),
+                "confidence": float(conf),
+                "created_at": created_at,
+            }
+        )
+    return out
+
+
+def build_graph_context(evidence_rows: list[dict]) -> str:
+    lines = []
+    for i, ev in enumerate(evidence_rows, start=1):
+        cite_id = f"{ev['edge_key']}:{i}"
+        lines.append(f"[{cite_id}] {ev['quote']}")
+    return "\n".join(lines)
+
+
+def build_vector_context(chunks: list[dict], max_chunks: int = 6) -> str:
+    lines = []
+    for c in chunks[:max_chunks]:
+        lines.append(f"[chunk:{c['chunk_id']}] {c['text'][:450]}")
+    return "\n".join(lines)
+
 
 @router.post("", response_model=ChatResponse)
 def chat(
@@ -97,94 +109,96 @@ def chat(
     msg = (payload.message or "").strip()
     if not msg:
         raise HTTPException(status_code=400, detail="Message is required")
-        
-    # Keep reasonable range
+
     k = max(5, min(getattr(payload, "k", 12), 30))
-    
-    # verify access
+
     membership = db.execute(
         select(UserSpace).where(
             UserSpace.user_id == UUID(user_id),
             UserSpace.space_id == payload.space_id,
         )
     ).scalar_one_or_none()
-    
     if not membership:
         raise HTTPException(status_code=403, detail="No access to this space")
     
-    #  HNSW
+    
+    # Rate limits
+    user_key = f"chat:user:{user_id}"
+    space_key = f"chat:space:{payload.space_id}"
+    
+    if not GLOBAL_RATE_LIMITER.allow(user_key, RateLimit(max_requests=10, window_seconds=60)):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded (user)")
+    
+    if not GLOBAL_RATE_LIMITER.allow(space_key, RateLimit(max_requests=50, window_seconds=60)):
+        return HTTPException(status_code=429, detail = "Rate limit exceeded (space)")
+    
+    # concurrency limit (3 active chats per user)
+    GLOBAL_CONCURRENCY.acquire(user_key, max_concurrent=3)
     try:
-        db.execute(sql_text("SET LOCAL hnsw.ef_search = :v"), {"v": 80})
-    except Exception:
-        pass
-    
-    # vector recall
-    chunks = vector_recall_chunks(db, space_id=str(payload.space_id), question=msg, top_k=k)
-    chunk_ids = [c["chunk_id"] for c in chunks]
-    
-    # seed from evidence 
-    seed_edge_keys = edge_keys_from_chunks(db, space_id=str(payload.space_id), chunk_ids=chunk_ids, limit=80)
-    seed_entities = entity_seeds_from_edges(db, space_id=str(payload.space_id),edge_keys=seed_edge_keys, limit=60)
-    
-    # Grapg expand
-    graph_edges = graph_expand(
-        db,
-        space_id=str(payload.space_id),
-        seed_entity_keys=seed_entities,
-        max_hops=2,
-        limit=60,
-    )
-    graph_edge_keys = [e["edge_key"] for e in graph_edges]
-    
-    #  Evidence pack
-    evidence = evidence_pack(
-        db,
-        space_id = str(payload.space_id),
-        edge_keys = graph_edge_keys,
-        limit_per_edge=2
-    )
-    
-    # prompts
-    graph_ctx = build_graph_context(graph_edges, evidence, max_edges=30)
-    vector_ctx = build_vector_context(chunks, max_chunks=6)
-    
-    system_prompt = (
-        "You are a grounded memory assistant.\n"
-        "Use provided information as primary source of truth.\n"
-        "when user ask for a fact, cite the evidence using [CITE edge_key:n]\n"
-        "If evidence does not support the answer, say you don't know.\n"
-    )
-    
-    user_prompt = (
-        f"Graph Facts + Evidence: \n{graph_ctx}\n\n"
-        f"Vector Context: \n{vector_ctx}\n\n"
-        f"User Question: {msg}\n\n"
-        "Answer with citations to the evidence if asked"
-    )
-    
-    provider = payload.provider
-    if provider == "openai":
-        model = payload.model or DEFAULT_OPENAI_MODEL
-        if not os.getenv("OPENAI_API_KEY"):
-            raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not set")
-        answer = call_openai_chat(model, system_prompt, user_prompt)
-        
-    elif provider == "qroq":
-        model = payload.model or DEFAULT_GROQ_MODEL
-        if not os.getenv("GROQ_API_KEY"):
-            raise HTTPException(status_code=500, detail="GROQ_API_KEY is not set")
-        answer = call_groq_chat(model, system_prompt, user_prompt)
-        
-    else:
-        raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
-    
-    return {
-        "answer": answer,
-        "model": model,
-        "memory_user":{
-            "vector_chunks": chunks[:k],
-            "seed_entities": seed_entities,
-            "graph_edges": graph_edges,
-        },
-    }
-    
+        try:
+            db.execute(sql_text("SET LOCAL hnsw.ef_search = :v"), {"v": 80})
+        except Exception:
+            pass
+
+        # 1) Vector recall
+        chunks = vector_recall_chunks(db, space_id=str(payload.space_id), question=msg, top_k=k)
+        chunk_ids = [c["chunk_id"] for c in chunks]
+
+        # 2) Seeds
+        seed_edge_keys = edge_keys_from_chunks(db, space_id=str(payload.space_id), chunk_ids=chunk_ids, limit=80)
+        seed_entities = entity_seeds_from_edges(db, space_id=str(payload.space_id), edge_keys=seed_edge_keys, limit=60)
+
+        # 3) Graph expand
+        graph_edges = graph_expand(
+            db,
+            space_id=str(payload.space_id),
+            seed_entity_keys=seed_entities,
+            max_hops=2,
+            limit=60,
+        )
+        graph_edge_keys = [e["edge_key"] for e in graph_edges]
+
+        # 4) Evidence for citations (what we return to user)
+        evidence_rows = fetch_evidence_rows(db, space_id=str(payload.space_id), edge_keys=graph_edge_keys, limit_total=12)
+
+        graph_ctx = build_graph_context(evidence_rows)
+        vector_ctx = build_vector_context(chunks, max_chunks=6)
+
+        system_prompt = (
+            "You are a grounded memory assistant.\n"
+            "Use the provided evidence as the source of truth.\n"
+            "When stating a fact, cite it as [id] exactly.\n"
+            "If evidence does not support the answer, say you don't know.\n"
+        )
+
+        user_prompt = (
+            f"Graph Evidence:\n{graph_ctx}\n\n"
+            f"Vector Context:\n{vector_ctx}\n\n"
+            f"User: {msg}\n\n"
+            "Answer:"
+        )
+
+        # LLM call via gateway
+        answer = chat_completion(
+            provider = payload.provider,
+            model = payload.model,
+            system_prompt = system_prompt,
+            user_prompt = user_prompt,
+            max_tokens = 1500,
+        )
+
+        memory_used = []
+        for i, ev in enumerate(evidence_rows, start=1):
+            cite_id = f"{ev['edge_key']}:{i}"
+            memory_used.append(
+                MemoryCitation(
+                    id=cite_id,
+                    score=ev["confidence"],
+                    created_at=ev["created_at"],
+                    snippet=ev["quote"][:300],
+                )
+            )
+
+        return ChatResponse(answer=answer, memory_used=memory_used)
+    finally: 
+        GLOBAL_CONCURRENCY.release(user_key)
