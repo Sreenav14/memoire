@@ -1,30 +1,48 @@
 from __future__ import annotations
 
+import logging
 import os
 import random
 import time
 from typing import Optional
 
-from openai import OpenAI
-from groq import Groq
-
-# Keep clients here (single init)
-_openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-_groq = Groq(api_key=os.getenv("GROQ_API_KEY"))
+log = logging.getLogger("memoire.llm.gateway")
 
 DEFAULT_OPENAI_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 DEFAULT_GROQ_MODEL = os.getenv("GROQ_CHAT_MODEL", "llama-3.1-8b-instant")
 
-# Simple timeouts (seconds)
 OPENAI_TIMEOUT_S = float(os.getenv("OPENAI_TIMEOUT_S", "30"))
 GROQ_TIMEOUT_S = float(os.getenv("GROQ_TIMEOUT_S", "30"))
 
-# Retry config
 MAX_ATTEMPTS = int(os.getenv("LLM_MAX_ATTEMPTS", "5"))
+
+_openai_client = None
+_groq_client = None
+
+
+def _get_openai():
+    global _openai_client
+    if _openai_client is None:
+        from openai import OpenAI
+        key = os.getenv("OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError("OPENAI_API_KEY is not set")
+        _openai_client = OpenAI(api_key=key)
+    return _openai_client
+
+
+def _get_groq():
+    global _groq_client
+    if _groq_client is None:
+        from groq import Groq
+        key = os.getenv("GROQ_API_KEY")
+        if not key:
+            raise RuntimeError("GROQ_API_KEY is not set")
+        _groq_client = Groq(api_key=key)
+    return _groq_client
 
 
 def _sleep_backoff(attempt: int) -> None:
-    # exponential backoff with jitter
     base = min(8.0, 0.5 * (2 ** attempt))
     time.sleep(base + random.random() * 0.25)
 
@@ -37,23 +55,16 @@ def chat_completion(
     model: Optional[str] = None,
     max_tokens: int = 800,
 ) -> str:
-    """
-    Single gateway for all providers.
-    - Central place for retries/backoff/timeouts.
-    - Later: add provider == "bedrock" here without changing routers.
-    """
+    """Single gateway for all LLM providers with retries, backoff, and timeouts."""
     provider = (provider or "").lower().strip()
 
     if provider == "openai":
-        if not os.getenv("OPENAI_API_KEY"):
-            raise RuntimeError("OPENAI_API_KEY is not set")
-
+        client = _get_openai()
         use_model = model or DEFAULT_OPENAI_MODEL
 
-        last_err: Optional[Exception] = None
         for attempt in range(MAX_ATTEMPTS):
             try:
-                resp = _openai.chat.completions.create(
+                resp = client.chat.completions.create(
                     model=use_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -61,30 +72,23 @@ def chat_completion(
                     ],
                     temperature=0.2,
                     max_tokens=max_tokens,
-                    timeout=OPENAI_TIMEOUT_S,  # important
+                    timeout=OPENAI_TIMEOUT_S,
                 )
                 return resp.choices[0].message.content or ""
             except Exception as e:
-                last_err = e
-                # In v1 we retry with backoff for transient failures.
-                # If you want stricter behavior later, we can narrow to known retryable codes.
+                log.warning("OpenAI attempt %d/%d failed: %s", attempt + 1, MAX_ATTEMPTS, str(e)[:200])
                 if attempt < MAX_ATTEMPTS - 1:
                     _sleep_backoff(attempt)
                     continue
                 raise RuntimeError(f"OpenAI chat failed after {MAX_ATTEMPTS} attempts: {e}") from e
 
-        raise RuntimeError(f"OpenAI chat failed: {last_err}")
-
-    if provider == "groq":
-        if not os.getenv("GROQ_API_KEY"):
-            raise RuntimeError("GROQ_API_KEY is not set")
-
+    elif provider == "groq":
+        client = _get_groq()
         use_model = model or DEFAULT_GROQ_MODEL
 
-        last_err: Optional[Exception] = None
         for attempt in range(MAX_ATTEMPTS):
             try:
-                resp = _groq.chat.completions.create(
+                resp = client.chat.completions.create(
                     model=use_model,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -92,20 +96,17 @@ def chat_completion(
                     ],
                     temperature=0.2,
                     max_tokens=max_tokens,
-                    timeout=GROQ_TIMEOUT_S,  # important
+                    timeout=GROQ_TIMEOUT_S,
                 )
                 return resp.choices[0].message.content or ""
             except Exception as e:
-                last_err = e
+                log.warning("Groq attempt %d/%d failed: %s", attempt + 1, MAX_ATTEMPTS, str(e)[:200])
                 if attempt < MAX_ATTEMPTS - 1:
                     _sleep_backoff(attempt)
                     continue
                 raise RuntimeError(f"Groq chat failed after {MAX_ATTEMPTS} attempts: {e}") from e
 
-        raise RuntimeError(f"Groq chat failed: {last_err}")
+    else:
+        raise RuntimeError(f"Invalid LLM provider: '{provider}'. Use 'openai' or 'groq'.")
 
-    # Future:
-    # if provider == "bedrock":
-    #     return bedrock_chat_completion(...)
-
-    raise RuntimeError(f"Invalid provider: {provider}")
+    raise RuntimeError("Unreachable")

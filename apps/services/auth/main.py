@@ -9,11 +9,10 @@ from .deps import get_db
 from .models import User, Space, UserSpace, UserPassword
 from .schema.schemas import SignupRequest, LoginRequest
 from .auth import hash_password, create_access_token, verify_password
-from .models import User, UserPassword, Space, UserSpace
 from .auth_deps import get_current_user
 
 load_dotenv()
-app = FastAPI(title ="MEMORIE API", version = "0.1.0")
+app = FastAPI(title="MEMOIRE API", version="0.1.0")
 
 @app.get("/health")
 def health():
