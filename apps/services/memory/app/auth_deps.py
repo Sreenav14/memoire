@@ -20,5 +20,5 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(credent
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     except JWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-    print("Memory auth created")
+    
     return user_id
