@@ -16,7 +16,7 @@ from .routers import inference_rules
 
 load_dotenv()
 START_TIME = time.time()
-app = FastAPI(title="Memoire memory service", version="0.1.0", debug=True)
+app = FastAPI(title="Memoire memory service", version="2.1.0", debug=True)
 
 
 @app.get("/health")
