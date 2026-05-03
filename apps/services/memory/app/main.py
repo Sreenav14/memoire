@@ -1,10 +1,9 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
 import time
-import sys
-import platform
-from typing import Any
+import logging
 
 from .routers import notes
 from .routers import search
@@ -15,87 +14,49 @@ from .routers import profile
 from .routers import inference_rules
 
 load_dotenv()
+
+SERVICE_NAME = os.getenv("SERVICE_NAME", "memoire-memory")
+SERVICE_VERSION = os.getenv("SERVICE_VERSION", "0.1.1")
+DEBUG = os.getenv("DEBUG", "0") == "1"
+
+log = logging.getLogger("memoire.memory")
+
+app = FastAPI(title=f"Memoire {SERVICE_NAME}", version=SERVICE_VERSION, debug=DEBUG)
+
+# Optional CORS
+allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS")
+if allowed_origins:
+    origins = [o.strip() for o in allowed_origins.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
 START_TIME = time.time()
-app = FastAPI(title="Memoire memory service", version="2.1.0", debug=True)
+
+
+@app.on_event("startup")
+def _startup():
+    log.info("%s starting (version=%s) debug=%s", SERVICE_NAME, SERVICE_VERSION, DEBUG)
+
+
+@app.on_event("shutdown")
+def _shutdown():
+    log.info("%s shutting down", SERVICE_NAME)
 
 
 @app.get("/health")
 def health():
-    """Simple health endpoint with uptime."""
-    uptime_seconds = int(time.time() - START_TIME)
     return {
         "status": "ok",
-        "service": "memoire-memory",
-        "version": app.version,
-        "uptime_seconds": uptime_seconds,
+        "service": SERVICE_NAME,
+        "version": SERVICE_VERSION,
+        "uptime_seconds": int(time.time() - START_TIME),
     }
 
-
-@app.get("/debug/info")
-def debug_info() -> dict[str, Any]:
-    """
-    Small debug endpoint that prints and returns what this service is doing:
-    - lists registered routes (paths)
-    - returns a few important env vars
-    The function prints the same info to the service stdout.
-    """
-    routes = []
-    for r in app.routes:
-        # route.path exists on APIRoute and other route types
-        path = getattr(r, "path", None) or getattr(r, "prefix", None) or str(r)
-        routes.append(path)
-
-    info = {
-        "service": "memoire-memory",
-        "version": app.version,
-        "route_count": len(routes),
-        "routes": routes,
-        "env": {
-            "GRAPH_ENABLED": os.getenv("GRAPH_ENABLED"),
-            "DATABASE_URL": os.getenv("DATABASE_URL"),
-        },
-    }
-
-    # Print to stdout for easy visibility in container logs
-    print("DEBUG /debug/info called. Summary:")
-    print(info)
-    return info
-
-
-@app.get("/heathinfo")
-@app.get("/healthinfo")
-def health_info() -> dict[str, Any]:
-    """
-    Detailed health information for debugging:
-    - uptime, pid, platform, python version
-    - registered routes and count
-    - key environment variables and debug flag
-    """
-    uptime_seconds = int(time.time() - START_TIME)
-    routes = []
-    for r in app.routes:
-        path = getattr(r, "path", None) or getattr(r, "prefix", None) or str(r)
-        routes.append(path)
-
-    info = {
-        "service": "memoire-memory",
-        "version": app.version,
-        "status": "ok",
-        "uptime_seconds": uptime_seconds,
-        "pid": os.getpid(),
-        "platform": platform.platform(),
-        "python_version": sys.version.split()[0],
-        "route_count": len(routes),
-        "routes": routes,
-        "env": {
-            "GRAPH_ENABLED": os.getenv("GRAPH_ENABLED"),
-            "DATABASE_URL": os.getenv("DATABASE_URL"),
-        },
-        "debug": app.debug,
-    }
-    print("/healthinfo called. Summary:")
-    print(info)
-    return info
 
 app.include_router(notes.router)
 app.include_router(search.router)
