@@ -42,6 +42,108 @@ LOCK_STALE_MINUTES = int(os.getenv("WORKER_LOCK_STALE_MINUTES", "15"))
 WORKER_ID = os.getenv("WORKER_ID") or f"{socket.gethostname()}-{os.getpid()}"
 
 
+START_TIME = time.time()
+
+import threading
+import http.server
+import socketserver
+import urllib.parse
+
+
+class WorkerDetails:
+    """Collect runtime details about this worker and queue counts."""
+
+    def __init__(self) -> None:
+        self.worker_id = WORKER_ID
+        self.poll_seconds = POLL_SECONDS
+        self.max_attempts = MAX_ATTEMPTS
+        self.lock_stale_minutes = LOCK_STALE_MINUTES
+        self.graph_enabled = GRAPH_ENABLED
+        self.host = socket.gethostname()
+        self.pid = os.getpid()
+        self.start_time = START_TIME
+
+    def _counts(self, db: Session) -> dict:
+        queued = db.execute(select(func.count()).select_from(IngestionJob).where(IngestionJob.status == "queued")).scalar() or 0
+        processing = db.execute(select(func.count()).select_from(IngestionJob).where(IngestionJob.status == "processing")).scalar() or 0
+        failed = db.execute(select(func.count()).select_from(IngestionJob).where(IngestionJob.status == "failed")).scalar() or 0
+        done = db.execute(select(func.count()).select_from(IngestionJob).where(IngestionJob.status == "done")).scalar() or 0
+        return {"queued": int(queued), "processing": int(processing), "failed": int(failed), "done": int(done)}
+
+    def to_dict(self) -> dict:
+        db = SessionLocal()
+        try:
+            counts = self._counts(db)
+        finally:
+            db.close()
+
+        uptime_seconds = int(time.time() - self.start_time)
+        return {
+            "worker_id": self.worker_id,
+            "host": self.host,
+            "pid": self.pid,
+            "uptime_seconds": uptime_seconds,
+            "poll_seconds": self.poll_seconds,
+            "max_attempts": self.max_attempts,
+            "lock_stale_minutes": self.lock_stale_minutes,
+            "graph_enabled": self.graph_enabled,
+            "queue": counts,
+        }
+
+
+class WorkerHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+    """A tiny HTTP handler exposing /worker/status and /worker/run-once endpoints."""
+
+    def _send_json(self, data: dict, status: int = 200) -> None:
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if path == "/worker/status":
+            wd = WorkerDetails()
+            self._send_json(wd.to_dict())
+            return
+
+        if path == "/worker/run-once":
+            # Run one processing cycle synchronously and return result.
+            try:
+                ran = run_once()
+                msg = "processed a job" if ran else "no job processed"
+                self._send_json({"ran": bool(ran), "message": msg})
+            except Exception as e:
+                log.exception("run-once endpoint error")
+                self._send_json({"ran": False, "error": str(e)}, status=500)
+            return
+
+        # Not found
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        # Route HTTP logs to our logger
+        log.info("%s - - %s", self.client_address[0], format % args)
+
+
+def start_http_api(host: str = "0.0.0.0", port: int = 8000) -> threading.Thread:
+    """Start a simple HTTP server in a background thread. Returns the Thread."""
+    def _serve() -> None:
+        with socketserver.ThreadingTCPServer((host, port), WorkerHTTPRequestHandler) as httpd:
+            log.info("worker http api listening on %s:%d", host, port)
+            try:
+                httpd.serve_forever()
+            except Exception:
+                log.exception("http server stopped")
+
+    t = threading.Thread(target=_serve, daemon=True, name="worker-http-api")
+    t.start()
+    return t
+
 def claim_next_job(db: Session) -> Optional[IngestionJob]:
     """Atomically claims one job. Also rescues stale locks via row-level locking."""
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -318,6 +420,11 @@ def run_once() -> bool:
 
 def main():
     log.info("worker started  id=%s  poll=%ds", WORKER_ID, POLL_SECONDS)
+    # Optionally start the HTTP API in the background when enabled via env var.
+    if os.getenv("WORKER_HTTP_API", "0") == "1":
+        host = os.getenv("WORKER_HTTP_HOST", "0.0.0.0")
+        port = int(os.getenv("WORKER_HTTP_PORT", "8000"))
+        start_http_api(host=host, port=port)
     while True:
         did = run_once()
         if not did:
