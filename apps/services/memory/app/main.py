@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from dotenv import load_dotenv
+import os
+from typing import Any
 
 from .routers import notes
 from .routers import search
@@ -17,6 +19,36 @@ app = FastAPI(title="Memoire memory service", version="0.1.0", debug=True)
 def health():
     return {"status": "ok", "service": "memoire-memory"}
 
+
+@app.get("/debug/info")
+def debug_info() -> dict[str, Any]:
+    """
+    Small debug endpoint that prints and returns what this service is doing:
+    - lists registered routes (paths)
+    - returns a few important env vars
+    The function prints the same info to the service stdout.
+    """
+    routes = []
+    for r in app.routes:
+        # route.path exists on APIRoute and other route types
+        path = getattr(r, "path", None) or getattr(r, "prefix", None) or str(r)
+        routes.append(path)
+
+    info = {
+        "service": "memoire-memory",
+        "version": app.version,
+        "route_count": len(routes),
+        "routes": routes,
+        "env": {
+            "GRAPH_ENABLED": os.getenv("GRAPH_ENABLED"),
+            "DATABASE_URL": os.getenv("DATABASE_URL"),
+        },
+    }
+
+    # Print to stdout for easy visibility in container logs
+    print("DEBUG /debug/info called. Summary:")
+    print(info)
+    return info
 
 app.include_router(notes.router)
 app.include_router(search.router)
