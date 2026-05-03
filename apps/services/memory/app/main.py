@@ -10,10 +10,10 @@ from .routers import profile
 from .routers import inference_rules
 
 load_dotenv()
-app = FastAPI(title="Memoire memory service", version="0.1.0", debug=True)
+app = FastAPI(title="Memoire memory service", version="0.1.1", debug=True)
 
 
-@app.get("/health")
+@app.get("/statuscheck")
 def health():
     return {"status": "ok", "service": "memoire-memory"}
 
